@@ -299,7 +299,8 @@ static void *add_pointer(void *src, void* addr)
   //assert((ptr2[3]&0xfc000000)==0x94000000); //bl
   //assert((ptr2[4]&0xfffffc1f)==0xd61f0000); //br
   set_jump_target((intptr_t)src,(intptr_t)addr);
-  __clear_cache((void*)ptr, (void*)((uintptr_t)ptr+4));
+  intptr_t ptr_rx=((intptr_t)ptr-(intptr_t)base_addr)+(intptr_t)base_addr_rx;
+  __clear_cache((void*)ptr_rx, (void*)(ptr_rx+4));
   return ptr2;
 }
 
@@ -328,6 +329,7 @@ static intptr_t get_pointer(void *stub)
 static void * parse_dirty_stub(void* addr, uintptr_t *source, uintptr_t *copy, u_int *len, uintptr_t *verifier)
 {
   u_int *ptr=(u_int *)addr;
+  u_int *ptr_rx=(u_int *)(((intptr_t)addr-(intptr_t)base_addr)+(intptr_t)base_addr_rx);
 
   //source
   if(((ptr[0]&0xFFE00000)==0x52A00000)&&((ptr[1]&0xFFE00000)==0x72800000)) //movz/movk
@@ -338,7 +340,7 @@ static void * parse_dirty_stub(void* addr, uintptr_t *source, uintptr_t *copy, u
   else if(((ptr[0]&0x9F000000)==0x90000000)&&((ptr[1]&0xFF000000)==0x91000000)) //adrp/add
   {
     int offset=(((signed int)(ptr[0]<<8)>>13)<<2)|((ptr[0]>>29)&0x3);
-    *source=((intptr_t)ptr&~0xfffLL)+((intptr_t)offset<<12);
+    *source=((intptr_t)ptr_rx&~0xfffLL)+((intptr_t)offset<<12);
     *source|=(ptr[1]>>10)&0xfff;
     ptr+=2;
   }
@@ -354,7 +356,7 @@ static void * parse_dirty_stub(void* addr, uintptr_t *source, uintptr_t *copy, u
   else if(((ptr[0]&0x9F000000)==0x90000000)&&((ptr[1]&0xFF000000)==0x91000000)) //adrp/add
   {
     int offset=(((signed int)(ptr[0]<<8)>>13)<<2)|((ptr[0]>>29)&0x3);
-    *copy=((intptr_t)ptr&~0xfffLL)+((intptr_t)offset<<12);
+    *copy=((intptr_t)ptr_rx&~0xfffLL)+((intptr_t)offset<<12);
     *copy|=(ptr[1]>>10)&0xfff;
     ptr+=2;
   }
@@ -957,10 +959,15 @@ static void output_w32(u_int word)
   out+=4;
 }
 
-static u_int genjmp(uintptr_t addr)
+static u_int genjmp(intptr_t addr)
 {
   if(addr<4) return 0;
-  intptr_t offset=addr-(intptr_t)out;
+  intptr_t out_rx=(intptr_t)out;
+
+  if(addr<(intptr_t)base_addr||addr>=(intptr_t)base_addr+(1<<TARGET_SIZE_2))
+    out_rx=((intptr_t)out-(intptr_t)base_addr)+(intptr_t)base_addr_rx;
+
+  intptr_t offset=addr-out_rx;
   if(offset<-134217728LL||offset>=134217728LL)
   {
     int n;
@@ -968,7 +975,7 @@ static u_int genjmp(uintptr_t addr)
     {
       if(addr==jump_table_symbols[n])
       {
-        offset=(intptr_t)base_addr+(1<<TARGET_SIZE_2)-JUMP_TABLE_SIZE+n*16-(intptr_t)out;
+        offset=(intptr_t)base_addr_rx+(1<<TARGET_SIZE_2)-JUMP_TABLE_SIZE+n*16-out_rx;
         break;
       }
     }
@@ -977,10 +984,15 @@ static u_int genjmp(uintptr_t addr)
   return (offset>>2)&0x3ffffff;
 }
 
-static u_int gencondjmp(uintptr_t addr)
+static u_int gencondjmp(intptr_t addr)
 {
   if(addr<4) return 0;
-  intptr_t offset=addr-(intptr_t)out;
+  intptr_t out_rx=(intptr_t)out;
+
+  if(addr<(intptr_t)base_addr||addr>=(intptr_t)base_addr+(1<<TARGET_SIZE_2))
+    out_rx=((intptr_t)out-(intptr_t)base_addr)+(intptr_t)base_addr_rx;
+
+  intptr_t offset=addr-out_rx;
   assert(offset>=-1048576LL&&offset<1048576LL);
   return (offset>>2)&0x7ffff;
 }
@@ -2913,23 +2925,35 @@ static void emit_breakpoint(u_int imm)
 
 static void emit_adr(intptr_t addr, int rt)
 {
-  intptr_t offset=addr-(intptr_t)out;
+  intptr_t out_rx=(intptr_t)out;
+  if(addr<(intptr_t)base_addr||addr>=(intptr_t)base_addr+(1<<TARGET_SIZE_2))
+    out_rx=((intptr_t)out-(intptr_t)base_addr)+(intptr_t)base_addr_rx;
+
+  intptr_t offset=addr-(intptr_t)out_rx;
   assert(offset>=-1048576LL&&offset<1048576LL);
   assem_debug("adr %d,#%d",regname64[rt],offset);
   output_w32(0x10000000|(offset&0x3)<<29|((offset>>2)&0x7ffff)<<5|rt);
 }
 static void emit_adrp(intptr_t addr, int rt)
 {
-  intptr_t offset=((addr&~0xfffLL)-((intptr_t)out&~0xfffLL));
+  intptr_t out_rx=(intptr_t)out;
+  if(addr<(intptr_t)base_addr||addr>=(intptr_t)base_addr+(1<<TARGET_SIZE_2))
+    out_rx=((intptr_t)out-(intptr_t)base_addr)+(intptr_t)base_addr_rx;
+
+  intptr_t offset=((addr&~0xfffLL)-((intptr_t)out_rx&~0xfffLL));
   assert(offset>=-4294967296LL&&offset<4294967296LL);
   offset>>=12;
-  assert((((intptr_t)out&~0xfffLL)+(offset<<12))==(addr&~0xfffLL));
+  assert((((intptr_t)out_rx&~0xfffLL)+(offset<<12))==(addr&~0xfffLL));
   assem_debug("adrp %d,#%d",regname64[rt],offset);
   output_w32(0x90000000|(offset&0x3)<<29|((offset>>2)&0x7ffff)<<5|rt);
 }
 static void emit_pc_relative_addr(intptr_t addr, int rt)
 {
-  intptr_t offset=addr-(intptr_t)out;
+  intptr_t out_rx=(intptr_t)out;
+  if(addr<(intptr_t)base_addr||addr>=(intptr_t)base_addr+(1<<TARGET_SIZE_2))
+    out_rx=((intptr_t)out-(intptr_t)base_addr)+(intptr_t)base_addr_rx;
+
+  intptr_t offset=addr-(intptr_t)out_rx;
   if(offset>=-1048576LL&&offset<1048576LL){
     emit_adr(addr,rt);
   }
@@ -5119,7 +5143,7 @@ static void do_clear_cache(void)
       for(j=0;j<32;j++) 
       {
         if(bitmap&(1<<j)) {
-          start=(intptr_t)base_addr+i*131072+j*4096;
+          start=(intptr_t)base_addr_rx+i*131072+j*4096;
           end=start+4095;
           j++;
           while(j<32) {
@@ -5146,6 +5170,8 @@ static void invalidate_addr(u_int addr)
 
 // CPU-architecture-specific initialization
 static void arch_init(void) {
+
+  assert((fp_memory_map&7)==0);
   g_dev.r4300.new_dynarec_hot_state.rounding_modes[0]=0x0<<22; // round
   g_dev.r4300.new_dynarec_hot_state.rounding_modes[1]=0x3<<22; // trunc
   g_dev.r4300.new_dynarec_hot_state.rounding_modes[2]=0x1<<22; // ceil
@@ -5163,22 +5189,24 @@ static void arch_init(void) {
   jump_table_symbols[5] = (intptr_t)cached_interp_DDIVU;
 
   // Trampolines for jumps >128MB
-  intptr_t *ptr,*ptr2;
+  intptr_t *ptr,*ptr2,*ptr3;
   ptr=(intptr_t *)jump_table_symbols;
   ptr2=(intptr_t *)((char *)base_addr+(1<<TARGET_SIZE_2)-JUMP_TABLE_SIZE);
+  ptr3=(intptr_t *)((char *)base_addr_rx+(1<<TARGET_SIZE_2)-JUMP_TABLE_SIZE);
   while((char *)ptr<(char *)jump_table_symbols+sizeof(jump_table_symbols))
   {
-    int *ptr3=(int*)ptr2;
-    intptr_t offset=*ptr-(intptr_t)ptr2;
+    int *ptr4=(int*)ptr2;
+    intptr_t offset=*ptr-(intptr_t)ptr3;
     if(offset>=-134217728LL&&offset<134217728LL) {
-      *ptr3=0x14000000|((offset>>2)&0x3ffffff); // direct branch
+      *ptr4=0x14000000|((offset>>2)&0x3ffffff); // direct branch
     }else{
-      *ptr3=0x58000000|((8>>2)<<5)|18; // ldr x18,[pc,#8]
-      *(ptr3+1)=0xd61f0000|(18<<5);
+      *ptr4=0x58000000|((8>>2)<<5)|18; // ldr x18,[pc,#8]
+      *(ptr4+1)=0xd61f0000|(18<<5);
     }
     ptr2++;
     *ptr2=*ptr;
     ptr++;
     ptr2++;
+    ptr3+=2;
   }
 }
