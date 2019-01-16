@@ -1876,10 +1876,6 @@ static void ll_add_32(struct ll_entry **head,int vaddr,u_int reg32,void *addr)
 
 static void ll_remove_matching_addrs(struct ll_entry **head,intptr_t addr,int shift)
 {
-#ifdef HAVE_LIBNX
-  return;
-#endif
-
   struct ll_entry **cur=head;
   struct ll_entry *next;
 
@@ -1997,7 +1993,6 @@ struct ll_entry *get_dirty(struct r4300_core* r4300,u_int vaddr,u_int flags)
   if(vpage>2048) vpage=2048+(vpage&2047);
   struct ll_entry *head;
   head=jump_dirty[vpage];
-#ifndef HAVE_LIBNX
   while(head!=NULL) {
     if(head->vaddr==vaddr&&(head->reg32&flags)==0) {
       // Don't restore blocks which are about to expire from the cache
@@ -2019,7 +2014,7 @@ struct ll_entry *get_dirty(struct r4300_core* r4300,u_int vaddr,u_int flags)
     }
     head=head->next;
   }
-#endif
+  
   return NULL;
 }
 
@@ -2290,7 +2285,6 @@ static void *check_addr(u_int vaddr)
 // This is called when we write to a compiled block (see do_invstub)
 static void invalidate_page(u_int page)
 {
-#ifndef HAVE_LIBNX
   struct ll_entry *head;
   struct ll_entry *next;
   head=jump_in[page];
@@ -2317,7 +2311,6 @@ static void invalidate_page(u_int page)
     free(head);
     head=next;
   }
-#endif // HAVE_LIBNX
 }
 void invalidate_block(u_int block)
 {
@@ -2389,10 +2382,6 @@ void invalidate_block(u_int block)
 // Anything could have changed, so invalidate everything.
 static void invalidate_all_pages(void)
 {
-#ifndef HAVE_LIBNX
-  return;
-#endif
-
   u_int page;
   for(page=0;page<4096;page++)
     invalidate_page(page);
@@ -2427,10 +2416,6 @@ static void invalidate_all_pages(void)
 
 void invalidate_cached_code_new_dynarec(struct r4300_core* r4300, uint32_t address, size_t size)
 {
-#ifndef HAVE_LIBNX
-  return;
-#endif
-
     size_t i;
     size_t begin;
     size_t end;
@@ -2459,8 +2444,11 @@ void invalidate_cached_code_new_dynarec(struct r4300_core* r4300, uint32_t addre
 void clean_blocks(u_int page)
 {
 #ifdef HAVE_LIBNX
-  return;
+  bool jit_was_executable = jit_is_executable;
+  if(jit_is_executable)
+    jit_force_writeable();
 #endif
+
   struct ll_entry *head;
   inv_debug("INV: clean_blocks page=%d\n",page);
   head=jump_dirty[page];
@@ -2512,6 +2500,11 @@ void clean_blocks(u_int page)
     }
     head=head->next;
   }
+
+#ifdef HAVE_LIBNX
+  if(jit_was_executable)
+    jit_force_executable();
+#endif
 }
 
 static void emit_extjump(intptr_t addr, int target)
@@ -7790,6 +7783,10 @@ int new_recompile_block(int addr)
     else {
       assem_debug("Compile at unmapped memory address: %x ", (int)addr);
       //assem_debug("start: %x next: %x",g_dev.r4300.new_dynarec_hot_state.memory_map[start>>12],g_dev.r4300.new_dynarec_hot_state.memory_map[(start+4096)>>12]);
+#ifdef HAVE_LIBNX
+      if(jit_was_executable)
+        jit_force_executable();
+#endif
       return 1; // Caller will invoke exception handler
     }
     //DebugMessage(M64MSG_VERBOSE, "source= %x",(intptr_t)source);
