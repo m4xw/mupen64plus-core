@@ -2296,6 +2296,7 @@ static void invalidate_page(u_int page)
     free(head);
     head=next;
   }
+#ifndef HAVE_LIBNX // Skip kill pointer
   head=jump_out[page];
   jump_out[page]=0;
   while(head!=NULL) {
@@ -2311,6 +2312,7 @@ static void invalidate_page(u_int page)
     free(head);
     head=next;
   }
+#endif // HAVE_LIBNX
 }
 void invalidate_block(u_int block)
 {
@@ -2444,6 +2446,7 @@ void invalidate_cached_code_new_dynarec(struct r4300_core* r4300, uint32_t addre
 void clean_blocks(u_int page)
 {
 #ifdef HAVE_LIBNX
+  return; // Causes perf troubles, skip for now
   bool jit_was_executable = jit_is_executable;
   if(jit_is_executable)
     jit_force_writeable();
